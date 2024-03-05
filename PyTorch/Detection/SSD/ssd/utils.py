@@ -443,8 +443,9 @@ class SSDTransformer(object):
         if self.val:
             bbox_out = torch.zeros(max_num, 4)
             label_out =  torch.zeros(max_num, dtype=torch.long)
-            bbox_out[:bbox.size(0), :] = bbox
-            label_out[:label.size(0)] = label
+            if bbox.size(0) > 0:
+                bbox_out[:bbox.size(0), :] = bbox
+                label_out[:label.size(0)] = label
             return self.trans_val(img), img_size, bbox_out, label_out
 
         img, img_size, bbox, label = self.crop(img, img_size, bbox, label)
@@ -460,7 +461,7 @@ class SSDTransformer(object):
 
 # Implement a datareader for COCO dataset
 class COCODetection(data.Dataset):
-    def __init__(self, img_folder, annotate_file, transform=None):
+    def __init__(self, img_folder, annotate_file, transform=None, skip_empty=True):
         self.img_folder = img_folder
         self.annotate_file = annotate_file
 
@@ -497,12 +498,14 @@ class COCODetection(data.Dataset):
             bbox_label = self.label_map[bboxes["category_id"]]
             self.images[img_id][2].append((bbox, bbox_label))
 
-        for k, v in list(self.images.items()):
-            if len(v[2]) == 0:
-                self.images.pop(k)
+        if skip_empty:
+            for k, v in list(self.images.items()):
+                if len(v[2]) == 0:
+                    self.images.pop(k)
 
         self.img_keys = list(self.images.keys())
         self.transform = transform
+        print(f"Loaded dataset with  {len(self.images)} images, skip_empty : {skip_empty}")
 
     @property
     def labelnum(self):
@@ -593,3 +596,23 @@ def draw_patches(img, bboxes, labels, order="xywh", label_map={}):
         ax.text(cx-0.5*w, cy-0.5*h, label, ha="center", va="center", size=15, bbox=bbox_props)
     plt.show()
 
+
+if __name__ == "__main__":
+    # Run this code to test the loading of the Real-Colon validation and test splits for dataset converted in COCO format
+    dataset_folder = "/path/to/dataset"
+    dboxes = dboxes300_coco()
+    val_trans = SSDTransformer(dboxes, (300, 300), val=True)
+
+    val_annotate = os.path.join(dataset_folder, "validation_ann.json")
+    val_coco_root = os.path.join(dataset_folder, "validation_images")
+
+    val_coco = COCODetection(val_coco_root, val_annotate, val_trans)
+    val_coco_no_empty = COCODetection(val_coco_root, val_annotate, val_trans, skip_empty=True)
+    print(f"Loaded validation set with {len(val_coco)} images, {len(val_coco_no_empty)} with boxes")
+
+    test_annotate = os.path.join(dataset_folder, "test_ann.json")
+    test_coco_root = os.path.join(dataset_folder, "test_images")
+
+    test_coco = COCODetection(test_coco_root, test_annotate, val_trans)
+    test_coco_no_empty = COCODetection(test_coco_root, test_annotate, val_trans, skip_empty=True)
+    print(f"Loaded test set with {len(test_coco)} images, {len(test_coco_no_empty)} with boxes")

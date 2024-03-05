@@ -17,6 +17,8 @@ import time
 import numpy as np
 from contextlib import redirect_stdout
 import io
+import json
+import os
 
 from pycocotools.cocoeval import COCOeval
 
@@ -113,6 +115,69 @@ def evaluate(model, coco, cocoGt, encoder, inv_map, args):
     if args.local_rank == 0:
         print("")
         print("Predicting Ended, total time: {:.2f} s".format(time.time() - start))
+
+    # Create jsons with per-frame predictions and ground truths to compute whole-video statistics
+    if args.dataset_name == "real_colon":
+
+        json_start_time = time.time()
+        # Specify the path where you want to save the JSON file
+        output_result_path = os.path.join(args.inference_jsons, "predictions.json")
+        output_ground_truth_path = os.path.join(args.inference_jsons, "ground_truth.json")
+        print("Creating json file for predictions...")
+
+        # Convert final_results and cocoGt.dataset to a serializable format
+        serializable_results = []
+        serializable_gts = []
+        # Populate serializable_results
+        for result in final_results:
+            serializable_result = {
+                "id": int(result[0]),
+                "bbox": [float(result[1]), float(result[2]),
+                         float(result[1]) + float(result[3]),
+                         float(result[2]) + float(result[4])],
+                "score": float(result[5]),
+                "label": int(result[6]),
+            }
+            serializable_results.append(serializable_result)
+
+        # Save to a JSON file
+        with open(output_result_path, "w") as json_file:
+            json.dump(serializable_results, json_file)
+        print(f"Created predictions json file of size {len(serializable_results)}.")
+        print("Creating json file for ground truth...")
+
+        # Populate serializable_gt
+        for image_info in cocoGt.dataset['images']:
+            img_id = image_info['id']
+            annotations_list = []
+
+            # Collect all annotations for the current image
+            for annotation in cocoGt.dataset['annotations']:
+                if annotation['image_id'] == img_id:
+                    bbox_converted = [annotation['bbox'][0], annotation['bbox'][1],
+                                      annotation['bbox'][0] + annotation['bbox'][2],
+                                      annotation['bbox'][1] + annotation['bbox'][3]]
+                    annotations_list.append({
+                        "unique_id": annotation['unique_id'],
+                        "bbox": bbox_converted,
+                        "label": 1  # or the actual label if available
+                    })
+
+            serializable_gt = {
+                "id": img_id,
+                "file_name": image_info['file_name'],
+                "annotations": annotations_list
+            }
+
+            serializable_gts.append(serializable_gt)
+
+        # Save to a JSON file
+        with open(output_ground_truth_path, "w") as json_file:
+            json.dump(serializable_gts, json_file)
+        print(f"Created ground truth json file of size {len(serializable_gts)}")
+
+        json_end_time = time.time()
+        print(f"Finished creating jsons in {json_end_time - json_start_time} seconds.")
 
     cocoDt = cocoGt.loadRes(final_results, use_ext=True)
 

@@ -1,9 +1,36 @@
+# Polyp Detection using NVIDIA Deep Learning Examples for Tensor Cores
+
+This repository is a fork from https://github.com/NVIDIA/DeepLearningExamples and provides all the training and testing codes used for training and testing SSD polyp detection models in the paper "REAL-Colon: A dataset for developing real-world AI applications in colonoscopy".
+The REAL (Real-world multi-center Endoscopy Annotated video Library) - colon dataset is a dataset composed of  60 recordings of real-world colonoscopies. Full details and code to download the dataset and prepare data for model training and testing can be found here: https://github.com/cosmoimd/real-colon-dataset 
+For full details on the dataset and to cite this work, please refer to: Carlo Biffi, Giulio Antonelli, Sebastian Bernhofer, Cesare Hassan, Daizen Hirata, Mineo Iwatate, Andreas Maieron, Pietro Salvagnini, and Andrea Cherubini. "REAL-Colon: A dataset for developing real-world AI applications in colonoscopy." arXiv preprint arXiv:2403.02163 (2024). Available at: https://arxiv.org/abs/2403.02163.
+
+## SSD Model Training and Evaluation
+The SSD model is defined here https://github.com/cosmoimd/DeepLearningExamples/tree/master/PyTorch/Detection/SSD/
+
+### Training
+- Build and run the docker container with `docker build . -t nvidia_ssd` and then `docker run --rm -it --gpus=all --ipc=host nvidia_ssd`. Here you can also
+add any paths necessary for the code using the -v flag.
+- Add to the `dataset_folder` in `PyTorch/Detection/SSD/ssd/utils.py` the `output_folder` path obtained from the `export_coco_format.py` code run in the previous step. In this way, the model will be trained with an user-defined train/valid/test split of the data according to the user needds. 
+- To start training run: `CUDA_VISIBLE_DEVICES=0 python main.py --dataset-name real_colon --backbone resnet50 --warmup 300 --bs 64 --epochs 65 --data /coco --save ./models`.
+This will also save the model checkpoint in `./models`.
+
+### Validation
+To evaluate the trained models:
+- In the docker container, run `python ./main.py --backbone resnet50 --dataset-name real_colon 
+--json-save-path /path/to/save/json/files --mode testing --no-skip-empty --checkpoint /your/model/path --data /path/to/dir/containing/test/set/`
+- To compute False Positive and True Positive Rates (FPR and TRP) per video, from output jsons folder defined with `--json-save-path` in the previous code, please run: `python3 PyTorch/Detection/SSD/fpr_trp_eval.py <path_to_json_folder>`
+- To create output videos with with model predictions and GT boxes  run:`python3 result_visualisation.py <path_to_json_folder> <output_folder>`
+
+## Contact
+Andrea Cherubini - acherubini@cosmoimd.com
+Carlo Biffi - cbiffi@cosmoimd.com
+
 # NVIDIA Deep Learning Examples for Tensor Cores
 
-## Introduction
+### Introduction
 This repository provides State-of-the-Art Deep Learning examples that are easy to train and deploy, achieving the best reproducible accuracy and performance with NVIDIA CUDA-X software stack running on NVIDIA Volta, Turing and Ampere GPUs.
 
-## NVIDIA GPU Cloud (NGC) Container Registry
+### NVIDIA GPU Cloud (NGC) Container Registry
 These examples, along with our NVIDIA deep learning software stack, are provided in a monthly updated Docker container on the NGC container registry (https://ngc.nvidia.com). These containers include:
 
 - The latest NVIDIA examples from this repository
@@ -12,7 +39,7 @@ These examples, along with our NVIDIA deep learning software stack, are provided
 - [Monthly release notes](https://docs.nvidia.com/deeplearning/dgx/index.html#nvidia-optimized-frameworks-release-notes) for each of the NVIDIA optimized containers
 
 
-## Computer Vision
+### Computer Vision
 | Models                                                                                                                                 | Framework    | AMP            | Multi-GPU | Multi-Node | TensorRT | ONNX | Triton                                                                                                                       | DLC  | NB                                                                                                                                                               |
 |----------------------------------------------------------------------------------------------------------------------------------------|--------------|----------------|-----------|------------|----------|------|------------------------------------------------------------------------------------------------------------------------------|------|------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | [EfficientNet-B0](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/Classification/ConvNets/efficientnet)             | PyTorch      | Yes            | Yes       | -          | Supported | -    | Supported                                                                                                                    | Yes  | -                                                                                                                                                                |
@@ -38,7 +65,7 @@ These examples, along with our NVIDIA deep learning software stack, are provided
 | [SSD](https://github.com/NVIDIA/DeepLearningExamples/tree/master/TensorFlow/Detection/SSD)                                             | TensorFlow   | Yes            | Yes       | -          | Supported | -    | Supported                                                                                                                             | Yes  | [Yes](https://github.com/NVIDIA/DeepLearningExamples/blob/master/TensorFlow/Detection/SSD/models/research/object_detection/object_detection_tutorial.ipynb)      |
 | [U-Net Med](https://github.com/NVIDIA/DeepLearningExamples/tree/master/TensorFlow2/Segmentation/UNet_Medical)                          | TensorFlow2  | Yes            | Yes       | -          | Example | -    | Supported                                                                                                                             | Yes  | -                                                                                                                                                                |
 
-## Natural Language Processing
+### Natural Language Processing
 | Models                                                                                                                 | Framework   | AMP  | Multi-GPU | Multi-Node | TensorRT | ONNX | Triton                                                                                                    | DLC  | NB                                                                                                                                          |
 |------------------------------------------------------------------------------------------------------------------------|-------------|------|-----------|------------|----------|------|-----------------------------------------------------------------------------------------------------------|------|---------------------------------------------------------------------------------------------------------------------------------------------|
 | [BERT](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/LanguageModeling/BERT)                       | PyTorch     | Yes  | Yes       | Yes        | [Example](https://github.com/NVIDIA/TensorRT/tree/main/demo/BERT) | -    | [Example](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/LanguageModeling/BERT/triton)    | Yes  | -                                                                                                                                           |
@@ -49,8 +76,7 @@ These examples, along with our NVIDIA deep learning software stack, are provided
 | [GNMT](https://github.com/NVIDIA/DeepLearningExamples/tree/master/TensorFlow/Translation/GNMT)                         | TensorFlow  | Yes  | Yes       | -          | Supported | -    | Supported                                                                                                          | -    | -                                                                                                                                           |
 | [Faster Transformer](https://github.com/NVIDIA/DeepLearningExamples/tree/master/FasterTransformer)                     | Tensorflow  | -    | -         | -          | Example | -    | Supported                                                                                                          | -    | -                                                                                                                                           |
 
-
-## Recommender Systems
+### Recommender Systems
 | Models                                                                                                         | Framework   | AMP   | Multi-GPU | Multi-Node   | ONNX   | Triton                                                                                               | DLC  | NB                                                                                                     |
 |----------------------------------------------------------------------------------------------------------------|-------------|-------|-----------|--------------|--------|------------------------------------------------------------------------------------------------------|------|--------------------------------------------------------------------------------------------------------|
 | [DLRM](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/Recommendation/DLRM)                 | PyTorch     | Yes   | Yes       | -            | Yes    | [Example](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/Recommendation/DLRM/triton) | Yes  | [Yes](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/Recommendation/DLRM/notebooks) |
@@ -62,14 +88,13 @@ These examples, along with our NVIDIA deep learning software stack, are provided
 | [VAE-CF](https://github.com/NVIDIA/DeepLearningExamples/tree/master/TensorFlow/Recommendation/VAE-CF)          | TensorFlow  | Yes   | Yes       | -            | -      | Supported                                                                                                     | -    | -                                                                                                      |
 | [SIM](https://github.com/NVIDIA/DeepLearningExamples/tree/master/TensorFlow2/Recommendation/SIM)               | TensorFlow2 | Yes   | Yes       | -            | -      | Supported                                                                                                     | Yes  | -                                                                                                      |
 
-
-## Speech to Text
+### Speech to Text
 | Models                                                                                                       | Framework   | AMP  | Multi-GPU  | Multi-Node   | TensorRT | ONNX   | Triton                                                                                                   | DLC   | NB                                                                                                           |
 |--------------------------------------------------------------------------------------------------------------|-------------|------|------------|--------------|----------|--------|----------------------------------------------------------------------------------------------------------|-------|--------------------------------------------------------------------------------------------------------------|
 | [Jasper](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechRecognition/Jasper)        | PyTorch     | Yes  | Yes        | -            | Example | Yes    | [Example](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechRecognition/Jasper/trtis) | Yes   | [Yes](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechRecognition/Jasper/notebooks) |
 | [QuartzNet](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechRecognition/QuartzNet)  | PyTorch     | Yes  | Yes        | -            | Supported | -      | Supported                                                                                                         | Yes   | -                                                                                                            |
 
-## Text to Speech
+### Text to Speech
 | Models                                                                                                                  | Framework   | AMP  | Multi-GPU  | Multi-Node  | TensorRT | ONNX   | Triton                                                                                                        | DLC   | NB  |
 |-------------------------------------------------------------------------------------------------------------------------|-------------|------|------------|-------------|----------|--------|---------------------------------------------------------------------------------------------------------------|-------|-----|
 | [FastPitch](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/FastPitch)               | PyTorch     | Yes  | Yes        | -           | Example | -      | [Example](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/FastPitch/triton)    | Yes   | Yes |
@@ -77,21 +102,21 @@ These examples, along with our NVIDIA deep learning software stack, are provided
 | [Tacotron 2 and WaveGlow](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/Tacotron2) | PyTorch     | Yes  | Yes        | -           | Example | Yes    | [Example](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/Tacotron2/trtis_cpp) | Yes   | -   |
 | [HiFi-GAN](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/SpeechSynthesis/HiFiGAN)                  | PyTorch     | Yes  | Yes        | -           | Supported | -      | Supported                                                                                                              | Yes   | -   |
 
-## Graph Neural Networks
+### Graph Neural Networks
 | Models                                                                                                                  | Framework  | AMP  | Multi-GPU  | Multi-Node   | ONNX   | Triton   | DLC  | NB   |
 |-------------------------------------------------------------------------------------------------------------------------|------------|------|------------|--------------|--------|----------|------|------|
 | [SE(3)-Transformer](https://github.com/NVIDIA/DeepLearningExamples/tree/master/DGLPyTorch/DrugDiscovery/SE3Transformer) | PyTorch    | Yes  | Yes        | -            | -      | Supported         | -    | -    |
 | [MoFlow](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/DrugDiscovery/MoFlow)                       | PyTorch    | Yes  | Yes        | -            | -      | Supported         | -    | -    |
 
-## Time-Series Forecasting
+### Time-Series Forecasting
 | Models                                                                                                            | Framework  | AMP  | Multi-GPU   | Multi-Node   | TensorRT | ONNX   | Triton                                                                                           | DLC   | NB  |
 |-------------------------------------------------------------------------------------------------------------------|------------|------|-------------|--------------|----------|--------|--------------------------------------------------------------------------------------------------|-------|-----|
 | [Temporal Fusion Transformer](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/Forecasting/TFT) | PyTorch    | Yes  | Yes         | -            | Example | Yes    | [Example](https://github.com/NVIDIA/DeepLearningExamples/tree/master/PyTorch/Forecasting/TFT/triton) | Yes   | -   |
 
-## NVIDIA support
+### NVIDIA support
 In each of the network READMEs, we indicate the level of support that will be provided. The range is from ongoing updates and improvements to a point-in-time release for thought leadership.
 
-## Glossary
+### Glossary
 
 **Multinode Training**
 Supported on a pyxis/enroot Slurm cluster.

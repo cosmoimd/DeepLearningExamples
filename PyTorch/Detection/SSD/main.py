@@ -19,13 +19,16 @@ import torch
 import numpy as np
 from torch.optim.lr_scheduler import MultiStepLR
 import torch.utils.data.distributed
+import torch.multiprocessing
+torch.multiprocessing.set_sharing_strategy('file_system')
 
 from ssd.model import SSD300, ResNet, Loss
 from ssd.utils import dboxes300_coco, Encoder
 from ssd.logger import Logger, BenchLogger
 from ssd.evaluate import evaluate
 from ssd.train import train_loop, tencent_trick, load_checkpoint, benchmark_train_loop, benchmark_inference_loop
-from ssd.data import get_train_loader, get_val_dataset, get_val_dataloader, get_coco_ground_truth
+from ssd.data import get_train_loader, get_val_dataset, get_val_dataloader, get_coco_ground_truth_validation, \
+    get_coco_ground_truth_test, get_test_dataset
 
 import dllogger as DLLogger
 
@@ -34,6 +37,7 @@ try:
     from apex.parallel import DistributedDataParallel as DDP
 except ImportError:
     raise ImportError("Please install APEX from https://github.com/nvidia/apex")
+
 
 def generate_mean_std(args):
     mean_val = [0.485, 0.456, 0.406]
@@ -54,7 +58,13 @@ def make_parser():
     parser = ArgumentParser(description="Train Single Shot MultiBox Detector"
                                         " on COCO")
     parser.add_argument('--data', '-d', type=str, default='/coco', required=True,
-                        help='path to test and training data files')
+                        help='path to validation and training data files')
+    parser.add_argument('--dataset-name', '--dn', type=str, default='coco',
+                        choices=['real_colon', 'coco'],
+                        help='The type of data being used')
+    parser.add_argument("--negatives_sampling", dest='negatives_sampling', action="store_true",
+                        help="Enable negatives frames sampling at every epoch during training.")
+    parser.set_defaults(negatives_sampling=False)
     parser.add_argument('--epochs', '-e', type=int, default=65,
                         help='number of epochs for training')
     parser.add_argument('--batch-size', '--bs', type=int, default=32,
@@ -73,7 +83,7 @@ def make_parser():
     parser.add_argument('--save', type=str, default=None,
                         help='save model checkpoints in the specified directory')
     parser.add_argument('--mode', type=str, default='training',
-                        choices=['training', 'evaluation', 'benchmark-training', 'benchmark-inference'])
+                        choices=['training', 'evaluation', 'benchmark-training', 'benchmark-inference', 'testing'])
     parser.add_argument('--evaluation', nargs='*', type=int, default=[21, 31, 37, 42, 48, 53, 59, 64],
                         help='epochs at which to evaluate')
     parser.add_argument('--multistep', nargs='*', type=int, default=[43, 54],
@@ -110,6 +120,9 @@ def make_parser():
                         help="Allow TF32 computations on supported GPUs.")
     parser.add_argument("--no-allow-tf32", dest='allow_tf32', action="store_false",
                         help="Disable TF32 computations.")
+    parser.add_argument("--no-skip-empty", dest='skip_empty', action="store_false",
+                        help="Also use the empty images")
+    parser.set_defaults(skip_empty=True)
     parser.set_defaults(allow_tf32=True)
     parser.add_argument('--data-layout', default="channels_last", choices=['channels_first', 'channels_last'],
                         help="Model data layout. It's recommended to use channels_first with --no-amp")
@@ -118,9 +131,12 @@ def make_parser():
     parser.add_argument('--json-summary', type=str, default=None,
                         help='If provided, the json summary will be written to'
                              'the specified file.')
+    parser.add_argument('--inference_jsons', type=str, default=None,
+                        help='If provided, the json summary will be written to'
+                             'the specified file.')
 
     # Distributed
-    parser.add_argument('--local_rank', default=os.getenv('LOCAL_RANK',0), type=int,
+    parser.add_argument('--local_rank', default=os.getenv('LOCAL_RANK', 0), type=int,
                         help='Used for multi-process training. Can either be manually set ' +
                              'or automatically set by using \'python -m multiproc\'.')
 
@@ -147,25 +163,29 @@ def train(train_loop_func, logger, args):
         args.seed = np.random.randint(1e4)
 
     if args.distributed:
-        args.seed = (args.seed + torch.distributed.get_rank()) % 2**32
+        args.seed = (args.seed + torch.distributed.get_rank()) % 2 ** 32
     print("Using seed = {}".format(args.seed))
     torch.manual_seed(args.seed)
     np.random.seed(seed=args.seed)
 
+    os.makedirs(args.save, exist_ok=True)
 
     # Setup data, defaults
     dboxes = dboxes300_coco()
     encoder = Encoder(dboxes)
-    cocoGt = get_coco_ground_truth(args)
-
-    train_loader = get_train_loader(args, args.seed - 2**31)
-
+    cocoGt_val = get_coco_ground_truth_validation(args)
+    train_loader = get_train_loader(args, args.seed - 2 ** 31)
     val_dataset = get_val_dataset(args)
     val_dataloader = get_val_dataloader(val_dataset, args)
 
+    if args.dataset_name == "real_colon":
+        label_num = 2
+    else:
+        label_num = 81
     ssd300 = SSD300(backbone=ResNet(backbone=args.backbone,
                                     backbone_path=args.backbone_path,
-                                    weights=args.torchvision_weights_version))
+                                    weights=args.torchvision_weights_version),
+                    label_num=label_num)
     args.learning_rate = args.learning_rate * args.N_gpu * (args.batch_size / 32)
     start_epoch = 0
     iteration = 0
@@ -200,13 +220,23 @@ def train(train_loop_func, logger, args):
     total_time = 0
 
     if args.mode == 'evaluation':
-        acc = evaluate(ssd300, val_dataloader, cocoGt, encoder, inv_map, args)
+        acc = evaluate(ssd300, val_dataloader, cocoGt_val, encoder, inv_map, args)
+        if args.local_rank == 0:
+            print('Model precision {} mAP'.format(acc))
+        return
+
+    if args.mode == 'testing' and args.dataset_name == 'real_colon':
+        cocoGt_test = get_coco_ground_truth_test(args)
+        test_dataset = get_test_dataset(args)
+        test_dataloader = get_val_dataloader(test_dataset, args)
+        acc = evaluate(ssd300, test_dataloader, cocoGt_test, encoder, inv_map, args)
         if args.local_rank == 0:
             print('Model precision {} mAP'.format(acc))
         return
 
     scaler = torch.cuda.amp.GradScaler(enabled=args.amp)
     mean, std = generate_mean_std(args)
+
 
     for epoch in range(start_epoch, args.epochs):
         start_epoch_time = time.time()
@@ -222,7 +252,7 @@ def train(train_loop_func, logger, args):
             logger.update_epoch_time(epoch, end_epoch_time)
 
         if epoch in args.evaluation:
-            acc = evaluate(ssd300, val_dataloader, cocoGt, encoder, inv_map, args)
+            acc = evaluate(ssd300, val_dataloader, cocoGt_val, encoder, inv_map, args)
 
             if args.local_rank == 0:
                 logger.update_epoch(epoch, acc)
@@ -238,13 +268,55 @@ def train(train_loop_func, logger, args):
                 obj['model'] = ssd300.module.state_dict()
             else:
                 obj['model'] = ssd300.state_dict()
-            os.makedirs(args.save, exist_ok=True)
             save_path = os.path.join(args.save, f'epoch_{epoch}.pt')
             torch.save(obj, save_path)
             logger.log('model path', save_path)
         train_loader.reset()
-    DLLogger.log((), { 'total time': total_time })
+
+        if args.dataset_name == "real_colon" and args.negatives_sampling:
+            print("Creating a new train loader...")
+            train_loader = get_train_loader(args, args.seed - 2 ** 31)
+            print("... done.")
+
+    DLLogger.log((), {'total time': total_time})
     logger.log_summary()
+
+
+def testing(args):
+    # Check that GPUs are actually available
+    args.N_gpu = 1
+    args.distributed = False
+
+    # Setup data, defaults
+    dboxes = dboxes300_coco()
+    encoder = Encoder(dboxes)
+
+    if args.dataset_name == "real_colon":
+        label_num = 2
+    else:
+        label_num = 81
+    ssd300 = SSD300(backbone=ResNet(backbone=args.backbone,
+                                    backbone_path=args.backbone_path,
+                                    weights=args.torchvision_weights_version),
+                    label_num=label_num)
+
+    if not args.no_cuda:
+        ssd300.cuda()
+
+    if args.checkpoint is not None:
+        if os.path.isfile(args.checkpoint):
+            load_checkpoint(ssd300, args.checkpoint)
+        else:
+            print('Provided checkpoint is not path to a file')
+            return
+
+    cocoGt_test = get_coco_ground_truth_test(args)
+    test_dataset = get_test_dataset(args)
+    inv_map = {v: k for k, v in test_dataset.label_map.items()}
+    test_dataloader = get_val_dataloader(test_dataset, args)
+
+    acc = evaluate(ssd300, test_dataloader, cocoGt_test, encoder, inv_map, args)
+    print('Model precision {} mAP'.format(acc))
 
 
 def log_params(logger, args):
@@ -268,7 +340,9 @@ def log_params(logger, args):
         "num workers": args.num_workers,
         "AMP": args.amp,
         "precision": 'amp' if args.amp else 'fp32',
+        "skip_empty": args.skip_empty
     })
+
 
 if __name__ == "__main__":
     parser = make_parser()
@@ -284,21 +358,24 @@ if __name__ == "__main__":
     # write json only on the main thread
     args.json_summary = args.json_summary if args.local_rank == 0 else None
 
-    if args.mode == 'benchmark-training':
-        train_loop_func = benchmark_train_loop
-        logger = BenchLogger('Training benchmark', log_interval=args.log_interval,
-                             json_output=args.json_summary)
-        args.epochs = 1
-    elif args.mode == 'benchmark-inference':
-        train_loop_func = benchmark_inference_loop
-        logger = BenchLogger('Inference benchmark', log_interval=args.log_interval,
-                             json_output=args.json_summary)
-        args.epochs = 1
+    if args.mode == 'testing':
+        testing(args)
     else:
-        train_loop_func = train_loop
-        logger = Logger('Training logger', log_interval=args.log_interval,
-                        json_output=args.json_summary)
+        if args.mode == 'benchmark-training':
+            train_loop_func = benchmark_train_loop
+            logger = BenchLogger('Training benchmark', log_interval=args.log_interval,
+                                 json_output=args.json_summary)
+            args.epochs = 1
+        elif args.mode == 'benchmark-inference':
+            train_loop_func = benchmark_inference_loop
+            logger = BenchLogger('Inference benchmark', log_interval=args.log_interval,
+                                 json_output=args.json_summary)
+            args.epochs = 1
+        else:
+            train_loop_func = train_loop
+            logger = Logger('Training logger', log_interval=args.log_interval,
+                            json_output=args.json_summary)
 
-    log_params(logger, args)
+        log_params(logger, args)
 
-    train(train_loop_func, logger, args)
+        train(train_loop_func, logger, args)

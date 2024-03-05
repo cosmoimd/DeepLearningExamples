@@ -28,7 +28,7 @@ class COCOPipeline(Pipeline):
     def __init__(self, batch_size, file_root, annotations_file, default_boxes,
                  device_id, num_shards,
                  output_fp16=False, output_nhwc=False, pad_output=False,
-                 num_threads=1, seed=15):
+                 num_threads=1, seed=15, skip_empty=True):
         super(COCOPipeline, self).__init__(batch_size=batch_size,
                                            device_id=device_id,
                                            num_threads=num_threads,
@@ -47,7 +47,7 @@ class COCOPipeline(Pipeline):
                                            ratio=True,
                                            ltrb=True,
                                            shuffle_after_epoch=True,
-                                           skip_empty=True)
+                                           skip_empty=skip_empty)
         self.decode_slice = dali.ops.decoders.ImageSlice(device="cpu",
                                                          output_type=dali.types.RGB)
 
